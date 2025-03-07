@@ -66,7 +66,7 @@ def main():
     width = 800
     height = 600
     video_size = f'{width}x{height}'
-    endpoint = 'udp://localhost:2222'
+    endpoint = 'udp://@localhost:2222'
 
     ffmpeg_input_stream, ffmpeg_output_stream = initialize_streams(endpoint, fps, video_size)
 
