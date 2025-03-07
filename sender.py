@@ -45,20 +45,23 @@ def ffmpeg_close(ff_proc):
             print(line.decode('utf-8').strip())
 
 
-def readable_numbers(num: int):
-    s = 1000
-    postfix = {
-        'b': 1,
-        'Kb': s,
-        'Mb': s ** 2,
-        'Gb': s ** 3,
-        'Tb': s ** 4,
-        'Pb': s ** 5,
-    }
-    for pf, val in postfix.items():
-        if num / val < s:
-            return f'{round(num / val)}{pf}'
-    return f'{round(num/postfix["p"])}p'
+def readable_numbers(num):
+    if type(num) == int:
+        s = 1000
+        postfix = {
+            'b': 1,
+            'Kb': s,
+            'Mb': s ** 2,
+            'Gb': s ** 3,
+            'Tb': s ** 4,
+            'Pb': s ** 5,
+        }
+        for pf, val in postfix.items():
+            if num / val < s:
+                return f'{round(num / val)}{pf}'
+        return f'{round(num / postfix["Pb"])}p'
+    return num
+
 
 def main():
     # Initialize mss
@@ -83,7 +86,8 @@ def main():
             if not raw_frame:
                 break
             log_data['data_sent'] += len(raw_frame)
-            frame = process_frame(raw_frame, height, width)
+            frame, loss = process_frame(raw_frame, height, width)
+            log_data['loss'] += loss.item() / logging_interval
 
             ffmpeg_output_stream.stdin.write(frame.tobytes())
 
@@ -102,17 +106,18 @@ def main():
 
 
 model = Upscaler(upscale_factor=2)
+
+
 def process_frame(raw_frame: bytes, height, width) -> np.array:
     np_buffer = np.frombuffer(raw_frame, dtype=np.uint8).copy().reshape(height, width, 3)
     # return np_buffer  # Uncomment to see direct stream
 
     # Convert np to tensor
-    frame = torch.from_numpy(np_buffer).reshape((1, height, width, 3)).type(torch.float16)
-    predict_frame = model.update(frame / 255.0)
+    frame = torch.from_numpy(np_buffer).reshape((1, height, width, 3)).type(model.dtype)
+    predict_frame, loss = model.update(frame / 255.0)
     predict_frame = predict_frame.squeeze() * 255.0
 
-    return predict_frame.type(torch.uint8).numpy()
-
+    return predict_frame.type(torch.uint8).numpy(), loss
 
 
 if __name__ == "__main__":
