@@ -103,11 +103,16 @@ def main():
 
 model = Upscaler(upscale_factor=2)
 def process_frame(raw_frame: bytes, height, width) -> np.array:
-    # Convert to NumPy array
-    frame = torch.from_numpy(np.frombuffer(raw_frame, dtype=np.uint8).copy()).reshape((1, height, width, 3)).type(torch.float16)
-    predict_frame = model.update(frame / 255.0)
-    predict_frame = predict_frame.squeeze() * 255.0
+    np_buffer = np.frombuffer(raw_frame, dtype=np.uint8).copy().reshape(height, width, 3)
+
+    # # Convert np to tensor
+    # frame = torch.from_numpy(np_buffer).reshape((1, height, width, 3)).type(torch.float16)
+    # predict_frame = model.update(frame / 255.0)
+    # predict_frame = predict_frame.squeeze() * 255.0
+
+    return np_buffer
     return predict_frame.type(torch.uint8).numpy()
+
 
 
 if __name__ == "__main__":

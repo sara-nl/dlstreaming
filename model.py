@@ -41,6 +41,9 @@ class Upscaler(nn.Module):
         # Update parameters
         self.optimizer.step()
         self.optimizer.zero_grad()
+
+        # Re-fill the stream with actual data.
+        predict_frame[0, :, ::2, ::2] = smaller_frame
         predict_frame = predict_frame.permute(0, 2, 3, 1)
 
         return predict_frame

@@ -7,4 +7,4 @@ python sender.py
 ```
 
 Open VLC
-In VLC, do media -> open network stream -> set url to udp://@localhost:2222 as seen in terminal.
+In VLC, do media -> open network stream -> set url to uudp://@localhost:2222?pkt_size=1316 as seen in terminal.
