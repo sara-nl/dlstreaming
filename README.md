@@ -1,4 +1,6 @@
 ```
+sudo apt install ffmpeg
+
 virtualenv venv
 . venv/bin/activate
 pip install -r requirements.txt
