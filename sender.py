@@ -1,4 +1,5 @@
 import logging
+import threading
 import time
 from collections import defaultdict
 from datetime import datetime
@@ -7,12 +8,13 @@ import subprocess
 
 import numpy as np
 import torch
+from torch.autograd import set_detect_anomaly
 
 from model import Upscaler
 
 
 def initialize_streams(endpoint, fps, video_size):
-    in_cmd = f'ffmpeg -f x11grab -r {fps} -s {video_size} -i :0.0 -f rawvideo -pix_fmt rgb24 -'
+    in_cmd = f'ffmpeg -f x11grab -video_size 1920x1080 -r {fps} -i :0 -f rawvideo -pix_fmt rgb24 -vf scale=800:600 -'
     ffmpeg_input_stream = subprocess.Popen(
         in_cmd.split(" "),
         stdout=subprocess.PIPE,
@@ -63,6 +65,44 @@ def readable_numbers(num):
     return num
 
 
+logging_interval = 100
+log_data = defaultdict(int)
+
+
+class Trainer:
+    def __init__(self):
+        self.model = Upscaler(upscale_factor=2)
+        self.frame_buffer = []
+
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self.loop)
+        self.thread.start()
+        self.state_dict_checkpoint = self.model.state_dict().copy()
+
+    def loop(self):
+        set_detect_anomaly(True)
+        while True:
+            if len(self.frame_buffer) == 0:
+                continue
+
+            with self.lock:
+                frame = self.frame_buffer[0].detach().clone()
+
+            frame = frame / 128 - 1
+            predict_frame = self.model.update(frame)
+            loss = self.model.backward(frame, predict_frame)
+            log_data['loss'] += loss.detach().item() / logging_interval
+
+            self.state_dict_checkpoint = self.model.state_dict().copy()
+
+    def add(self, frame):
+        with self.lock:
+            self.frame_buffer.append(frame)
+
+            if len(self.frame_buffer) >= 2:
+                self.frame_buffer = self.frame_buffer[-2:]
+
+
 def main():
     # Initialize mss
     fps = 30
@@ -72,10 +112,9 @@ def main():
     endpoint = 'udp://@localhost:2222'
 
     ffmpeg_input_stream, ffmpeg_output_stream = initialize_streams(endpoint, fps, video_size)
-
-    logging_interval = 100
     frame_idx = 0
-    log_data = defaultdict(int)
+    trainer = Trainer()
+
     try:
         wait_time = 1 / fps
         logging.info(f'Streaming to {endpoint}')
@@ -86,9 +125,9 @@ def main():
             if not raw_frame:
                 break
             log_data['data_sent'] += len(raw_frame)
-            frame, loss = process_frame(raw_frame, height, width)
-            log_data['loss'] += loss.item() / logging_interval
+            np_buffer = np.frombuffer(raw_frame, dtype=np.uint8).copy().reshape(height, width, 3)
 
+            frame = process_frame(trainer, np_buffer, height, width)
             ffmpeg_output_stream.stdin.write(frame.tobytes())
 
             proc_elapsed = (datetime.now() - start_time).total_seconds()
@@ -100,6 +139,8 @@ def main():
             if frame_idx % logging_interval == 0:
                 logging.info(', '.join([f'{k}={readable_numbers(v)}' for k, v in log_data.items()]))
                 log_data.clear()
+
+                model.load_state_dict(trainer.state_dict_checkpoint)
     finally:
         ffmpeg_close(ffmpeg_input_stream)
         ffmpeg_close(ffmpeg_output_stream)
@@ -108,16 +149,15 @@ def main():
 model = Upscaler(upscale_factor=2)
 
 
-def process_frame(raw_frame: bytes, height, width) -> np.array:
-    np_buffer = np.frombuffer(raw_frame, dtype=np.uint8).copy().reshape(height, width, 3)
-    # return np_buffer  # Uncomment to see direct stream
-
+def process_frame(trainer, np_frame: np.array, height, width) -> np.array:
     # Convert np to tensor
-    frame = torch.from_numpy(np_buffer).reshape((1, height, width, 3)).type(model.dtype)
-    predict_frame, loss = model.update(frame / 255.0)
-    predict_frame = predict_frame.squeeze() * 255.0
+    frame = torch.from_numpy(np_frame).reshape((1, height, width, 3)).type(model.dtype)
+    with torch.no_grad():
+        trainer.add(frame.detach().clone())
+        predict_frame = model.update(frame / 128 - 1)
 
-    return predict_frame.type(torch.uint8).numpy(), loss
+    predict_frame = (predict_frame.squeeze() + 1) * 128
+    return predict_frame.type(torch.uint8).numpy()
 
 
 if __name__ == "__main__":

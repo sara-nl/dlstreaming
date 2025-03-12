@@ -48,16 +48,18 @@ class Upscaler(nn.Module):
 
         predict_frame = self.forward(smaller_frame)
 
+        # Re-fill the stream with actual (smaller) data.
+        # predict_frame[0, :, ::2, ::2] = smaller_frame
+        predict_frame = predict_frame.permute(0, 2, 3, 1)
+
+        return predict_frame
+
+    def backward(self, frame, predict_frame):
         loss = self.loss(predict_frame, frame)
-        if loss > 0.01:  # No overfitting?? maybe??
+        if loss > 0.0001:  # No overfitting?? maybe??
             loss.backward()
 
             # Update parameters
             self.optimizer.step()
             self.optimizer.zero_grad()
-
-        # Re-fill the stream with actual data.
-        predict_frame[0, :, ::2, ::2] = smaller_frame
-        predict_frame = predict_frame.permute(0, 2, 3, 1)
-
-        return predict_frame, loss
+        return loss
